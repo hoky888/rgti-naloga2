@@ -75,15 +75,13 @@ function parseFile(text) {
             var vertex2 = vertices[parseInt(line[2]) - 1];
             var vertex3 = vertices[parseInt(line[3]) - 1];
 
-            polygons.push(createFace(vertex1, vertex2, vertex3));
+            polygons.push(createFace(vertex1, vertex2, vertex3, polygons.length));
         }
         else if (line[0].localeCompare("l") == 0) {
             // l x y z L_r L_g L_b
             var light = {
-                position: vec3.fromValues(parseFloat(line[1]), parseFloat(line[2]), parseFloat(line[3])),
-                L_r: parseFloat(line[4]),
-                L_g: parseFloat(line[5]),
-                L_b: parseFloat(line[6])
+                position: vec3.fromValues(canvasWidth/2 + parseFloat(line[1]), canvasHeight/2 + parseFloat(line[2]), parseFloat(line[3])),
+                color: vec3.fromValues(parseFloat(line[4]), parseFloat(line[5]), parseFloat(line[6]))
             };
             lights.push(light);
         }
@@ -100,6 +98,15 @@ function parseFile(text) {
     }
 }
 
+var centerOfGravity = function(polygon) {
+    var sum = vec3.create();
+    vec3.add(sum, sum, polygon.vertexA.vertex);
+    vec3.add(sum, sum, polygon.vertexB.vertex);
+    vec3.add(sum, sum, polygon.vertexC.vertex);
+    var result = vectorByScalar(sum, 1/3.0);
+    return result;
+};
+
 var draw = function () {
     gl.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -111,6 +118,8 @@ var draw = function () {
     gl.lineTo(0, canvasHeight);
     gl.lineTo(0, 0);
     gl.stroke();
+
+    var objects = [];
 
     for (var i = 0; i < polygons.length; i++) {
         var p = clone(polygons[i]);
@@ -130,61 +139,107 @@ var draw = function () {
 
         calculateLighting(p);
 
-        drawLine(p.vertexA.vertex[0], p.vertexA.vertex[1], p.vertexB.vertex[0], p.vertexB.vertex[1]);
-        drawLine(p.vertexA.vertex[0], p.vertexA.vertex[1], p.vertexC.vertex[0], p.vertexC.vertex[1]);
-        drawLine(p.vertexC.vertex[0], p.vertexC.vertex[1], p.vertexB.vertex[0], p.vertexB.vertex[1]);
+        p.centerOfGravity = centerOfGravity(p);
+        p.distance = vec3.distance(p.centerOfGravity, vec4.fromValues(canvasWidth/2, canvasHeight/2, -1));
 
+        objects.push(p);
+    }
+
+    objects = objects.sort(function(a,b) {
+        return -(a.distance- b.distance);
+    });
+
+    for (var i = 0; i < objects.length; i++) {
+        var p = objects[i];
+        /*gl.beginPath();
+
+        drawLine(p.vertexA.vertex[0], p.vertexA.vertex[1], p.vertexB.vertex[0], p.vertexB.vertex[1], p.vertexA.color, p.vertexB.color);
+        drawLine(p.vertexA.vertex[0], p.vertexA.vertex[1], p.vertexC.vertex[0], p.vertexC.vertex[1], p.vertexA.color, p.vertexC.color);
+        drawLine(p.vertexC.vertex[0], p.vertexC.vertex[1], p.vertexB.vertex[0], p.vertexB.vertex[1], p.vertexC.color, p.vertexB.color);
+
+        gl.stroke();*/
+
+        var sum = vec3.create();
+        vec3.add(sum,sum, p.vertexA.color);
+        vec3.add(sum,sum, p.vertexB.color);
+        vec3.add(sum,sum, p.vertexC.color);
+        sum = vectorByScalar(sum, 1/3.0);
+
+        gl.beginPath();
+        gl.fillStyle = "rgb(" + Math.round(sum[0]*255) + "," + Math.round(sum[1]*255) + "," + Math.round(sum[2]*255) + ")";
+        gl.moveTo(p.vertexA.vertex[0],p.vertexA.vertex[1]);
+        gl.lineTo(p.vertexB.vertex[0],p.vertexB.vertex[1]);
+        gl.lineTo(p.vertexC.vertex[0],p.vertexC.vertex[1]);
+        gl.fill();
     }
 };
 
-var drawLine = function (x0, y0, x1, y1) {
-    gl.beginPath();
-
+var drawLine = function (x0, y0, x1, y1, color1, color2) {
     var grad = gl.createLinearGradient(x0, y0, x1, y1);
-    grad.addColorStop(0, "red");
-    grad.addColorStop(1, "green");
-
+    grad.addColorStop(0, "rgb(" + Math.round(color1[0]*255) + "," + Math.round(color1[1]*255) + "," + Math.round(color1[2]*255) + ")");
+    grad.addColorStop(1, "rgb(" + Math.round(color2[0]*255) + "," + Math.round(color2[1]*255) + "," + Math.round(color2[2]*255) + ")");
     gl.strokeStyle = grad;
-
     gl.moveTo(x0, y0);
     gl.lineTo(x1, y1);
-
-    gl.stroke();
 };
 
 var calculateLighting = function (poly) {
-    poly.vertexA.illumination = calculateLightingForVertex(poly.vertexA);
-    poly.vertexB.illumination = calculateLightingForVertex(poly.vertexB);
-    poly.vertexC.illumination = calculateLightingForVertex(poly.vertexC);
+    poly.vertexA.color = calculateColor(poly.vertexA);
+    poly.vertexB.color = calculateColor(poly.vertexB);
+    poly.vertexC.color = calculateColor(poly.vertexC);
 };
 
-var calculateLightingForVertex = function (vertex) {
-
+var calculateColor = function (vertex) {
+    var result = vec3.create();
     for (var i = 0; i < lights.length; i++) {
         var light = lights[i];
-        var Lm = [
-            light.position[0] - vertex.vertex[0],
-            light.position[1] - vertex.vertex[1],
-            light.position[2] - vertex.vertex[2]
-        ];
-        var N = vertex.normal;
-        var firstPart = vec3vec3(vec3vec3(material.Kd,vec3vec3(Lm,N)),light.);
+        var lm = vec3.fromValues(light.position[0] - vertex.vertex[0], light.position[1] - vertex.vertex[1], light.position[2] - vertex.vertex[2]);
+        var n = vertex.normal;
+
+        var lm_normalized = vec3.create();
+        var n_normalized = vec3.create();
+        vec3.normalize(lm_normalized, lm);
+        vec3.normalize(n_normalized, n);
+
+        var lmn = Math.max(0,vec3.dot(lm_normalized, n_normalized));
+        var firstPart = vectorByScalar(material.Kd, lmn)
+
+        var rm = vec3.create();
+        vec3.subtract(rm, vectorByScalar(n_normalized, 2 * lmn), lm_normalized);
+
+        var v = vec3.fromValues(-vertex.vertex[0], -vertex.vertex[1], -8-vertex.vertex[2]);
+        vec3.normalize(v, v);
+
+        var rmv = Math.pow(Math.max(0,vec3.dot(rm, v)), material.Ns);
+        var secondPart = vectorByScalar(material.Ks, rmv);
+
+        var sum = vec3.create();
+        vec3.add(sum, firstPart, secondPart);
+
+        var r = vec3.create();
+        vec3.multiply(r, sum, light.color);
+
+        vec3.add(result, result, r);
     }
+
+    if(result[0] > 1)
+        result[0] = 1;
+    if(result[1] > 1)
+        result[1] = 1;
+    if(result[2] > 1)
+        result[2] = 1;
+    return result;
 };
 
 var getCameraMatrix = function () {
-    var t = translate(0, 0, -8);
+    var t = translate(canvasWidth/2, canvasHeight/2, -50);
     var p = perspective(4);
 
     return multiplyMatrix(p, t);
 };
 
-var vec3vec3 = function (vec1, vec2) {
-    return vec3.fromValues(
-        vec1[0]*vec2[0],
-        vec1[1]*vec2[1],
-        vec1[2]*vec2[2]
-    );
+var vectorByScalar = function (vector, scalar) {
+    return vec3.fromValues(vector[0] * scalar, vector[1] * scalar, vector[2] * scalar);
 };
 
 $(document).keypress(function (e) {
@@ -241,11 +296,14 @@ $(document).keydown(function (e) {
     e.preventDefault();
 });
 
-createFace = function (vertexA, vertexB, vertexC) {
+createFace = function (vertexA, vertexB, vertexC, name) {
     return {
         vertexA: vertexA,
         vertexB: vertexB,
-        vertexC: vertexC
+        vertexC: vertexC,
+        name: name,
+        centerOfGravity: vec3.create(),
+        distance: 0,
     };
 };
 
@@ -253,7 +311,7 @@ createVertex = function (x, y, z, nx, ny, nz) {
     return {
         vertex: vec4.fromValues(x, y, z, 1),
         normal: vec3.fromValues(nx, ny, nz),
-        illumination: 0
+        color: vec3.fromValues(0, 0, 0)
     };
 };
 
@@ -261,7 +319,8 @@ clone = function (poly) {
     return createFace(
         createVertex(poly.vertexA.vertex[0], poly.vertexA.vertex[1], poly.vertexA.vertex[2], poly.vertexA.normal[0], poly.vertexA.normal[1], poly.vertexA.normal[2]),
         createVertex(poly.vertexB.vertex[0], poly.vertexB.vertex[1], poly.vertexB.vertex[2], poly.vertexB.normal[0], poly.vertexB.normal[1], poly.vertexB.normal[2]),
-        createVertex(poly.vertexC.vertex[0], poly.vertexC.vertex[1], poly.vertexC.vertex[2], poly.vertexC.normal[0], poly.vertexC.normal[1], poly.vertexC.normal[2])
+        createVertex(poly.vertexC.vertex[0], poly.vertexC.vertex[1], poly.vertexC.vertex[2], poly.vertexC.normal[0], poly.vertexC.normal[1], poly.vertexC.normal[2]),
+        poly.name
     );
 };
 
